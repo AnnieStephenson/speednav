@@ -1,0 +1,8 @@
+numpy
+os
+pandas
+geoplot
+geopandas
+matplotlib
+datetime
+seaborn

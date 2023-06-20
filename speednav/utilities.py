@@ -310,7 +310,7 @@ def plot_event_map(data_filter,
                       ax=ax)
 
 
-def plot_map_series(data_times, titles=None, kde=False, s=3, alpha=0.02, 
+def plot_map_series(data_times, titles=None, kde=False, s=3, alpha=0.02,
                     save=False):
     if len(data_times) >= 10:
         ncols = 10
