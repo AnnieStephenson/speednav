@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import datetime
 import seaborn as sns
 import math
+import itertools
+import networkx as nx
 
 '''
 Define global variables to be used throughout package.
@@ -168,22 +170,86 @@ DATA_VARS = {
             'DUPE0002': 'Duplicate event cluster number'
 }
 
-# Intensity-related variables
-INTENSITY_VARS = {'SYMBOLIC',
-                  '#_OF_INITIATORS_DISC',
-                  'LENGTH_DISC',
-                  'VIOLENCE_ADV',
-                  '#_PARTICIPATING',
-                  'WEAP/INJURY',
-                  'ATTACK_PER',
-                  'WEAPON_GRD',
-                  'ATTACK_EXT',
-                  '#_INJURED',
-                  '#_KILLED',
-                  'COERCIVE_ACT',
-                  'ARREST',
-                  'SOLDIER',
-                  'EXTRAORDINARY'}
+INTENSITY_VARS = {'symbolic': '0 or 1, describing whether or not the act was symbolic',
+                  'num_initiators_disc': 'total number of initiators, includeing known, suspected, and ambigious',
+                  'num_hostage': 'total number of hostages',
+                  'length_disc': 'length of event in days',
+                  'violence_adv': '0 or 1 to indicate whether violence was advocated',
+                  'weap_injury': '0 or 1 to indicate whether there were weapons involved or persons injured',
+                  'attack_per': '0 or 1 to indicate whether it was an attack targeting persons',
+                  'weapon_grd': 'reduced weapon type of known or suspected initiators',
+                  'attack_ext': '0 or 1 to indicate whether an attack was extraordinary in nature',
+                  'num_injured': 'number of persons injured',
+                  'num_killed': 'numer of persons killed',
+                  'coercive_act': '0 or 1 to indicate whether event was a coercive act',
+                  'num_arrest': 'number of persons arrested',
+                  'soldier': '0 or 1 to indicate whether soldiers were involved',
+                  'extraordinary': '0 or 1 to indicate whether the event was an extraordinary state act',
+                  'num_participating': 'NUM_INJURED + NUM_OF_INITIATORS_DISC + NUM_KILLED + NUM_HOSTAGE'}
+
+def calc_intensity_vars(data_filter):
+    '''
+    '''
+
+    # convert nans to 0. Needed for numeric values
+    data_nan0 = data_filter.fillna(0)
+
+    # SYMBOLIC
+    data_filter['symbolic'] = np.array(data_nan0.ER0004 == 2).astype('int')
+
+    # 'NUM_OF_INITIATORS_DISC'
+    data_filter['num_initiators_disc'] = (data_nan0.INI0012 + data_nan0.INI0013)/2 + (data_nan0.INI0024 + data_nan0.INI0025)/2
+
+    # 'NUM_HOSTAGE'
+    data_filter['num_hostage'] = (data_nan0.TE0014 + data_nan0.TE0015)/2
+
+    # 'LENGTH_DISC'
+    data_filter['length_disc'] = (data_nan0.DL0003 - data_nan0.DL0002).dt.days  # convert from datetime to number
+
+    # 'VIOLENCE_ADV'
+    data_filter['violence_adv'] = data_nan0.ER0006
+
+    # 'WEAP/INJURY'
+    data_filter['weap_injury'] = (~((data_nan0.INI0009 == 0) * (data_nan0.TE0012 == 0))).astype('int')
+
+    # 'ATTACK_PER'
+    data_filter['attack_per'] = (data_nan0.ER0007 == 7).astype('int')
+
+    # 'WEAPON_GRD'
+    data_filter['weapon_grd'] = data_nan0.INI0010
+
+    # 'ATTACK_EXT'
+    data_filter['attack_ext'] = (data_nan0.ER0007 <= 5)*(data_nan0.ER0007 >= 2).astype('int')
+
+    # 'NUM_INJURED'
+    data_filter['num_injured'] = (data_nan0.TE0012 + data_nan0.TE0013)/2
+
+    # 'NUM_KILLED'
+    data_filter['num_killed'] = (data_nan0.TE0010 + data_nan0.TE0011)/2
+
+    # 'COERCIVE_ACT'
+    data_filter['coercive_act'] = (data_nan0.ER0009 == 3).astype('int')
+
+    # 'NUM_ARREST'
+    data_filter['num_arrest'] = (data_nan0.TE0016 + data_nan0.TE0017)/2.
+
+    # 'SOLDIER'
+    data_filter['soldier'] = (data_nan0.INI0006 == 31).astype('int')
+
+    # 'EXTRAORDINARY'
+    data_filter['extraordinary'] = (data_nan0.ER0009 == 4).astype('int')
+
+    # 'NUM_PARTICIPATING'
+    data_filter['num_participating'] = data_filter.num_injured + data_filter.num_initiators_disc + data_filter.num_killed + data_filter.num_hostage
+
+
+# composite intensity variables
+INTENSITY_VARS_COMP = {'EXPRESSION_SG',
+                       'EXPRESSION_MASS',
+                       'VIOLENCE_NS',
+                       'REPRESSION_ST',
+                       'DISRUPTIVE_ST',
+                       'VIOLENCE_ST'}
 
 
 def load_data():
@@ -398,5 +464,71 @@ def calc_stat_vs_time(data_filter, var, window_size, date_var='DL0002', step=1,
     if calc_type == 'count':
         stat_vs_time = var_df.rolling(window=window_size, min_periods=1,
                                       step=step).count()
+    if calc_type == 'sum':
+        stat_vs_time = var_df.rolling(window=window_size, min_periods=1,
+                                      step=step).sum()
 
     return stat_vs_time
+
+
+def construct_edge_list(data_filter, node_name, edge_name, return_df=False):
+
+    # first make an array or df of each node var and edge variables
+    if node_name == 'index':
+        nodes = data_filter.index
+    else:
+        nodes = data_filter[node_name]
+
+    if edge_name == 'index':
+        edges = data_filter.index
+    else:
+        edges = data_filter[edge_name]
+    node_edge_data = np.vstack((nodes, edges))
+    sorted_edge_data = np.sort(node_edge_data.astype(str), axis=1)
+
+    # if two nodes have the same edge variable, then they share an edge
+    # sort the dataframe based on the edge variable
+    # use numpy unique with return_inverse true
+    edge_types, inds = np.unique(sorted_edge_data[1, :].astype(str), return_index=True)
+
+    # get rid of nans, which are always last (TODO: check to make sure this is always true)
+    if edge_types[-1] == 'nan':
+        edge_types = edge_types[:-1]
+        inds = inds[:-1]
+
+    # then will have to loop through those indices, as they'll be the first ones
+    edge_list_tot = np.zeros((1, 2))
+    for i in range(len(inds)):
+        nodes_edge_type = sorted_edge_data[0, i-1:inds[i]].astype(int)
+        edge_list = np.array(list(itertools.combinations(nodes_edge_type, 2)))
+        if not edge_list.size == 0:
+            edge_list_tot = np.vstack((edge_list_tot, edge_list))
+    edge_list_tot = np.delete(edge_list_tot, 0, 0)
+
+    # then make a pandas df from the edge list array where first column is source and second is target
+    if return_df:
+        edge_df = pd.DataFrame({'source': edge_list_tot[:, 0], 'target': edge_list_tot[:, 1]})
+        result = edge_df
+    else:
+        result = edge_list_tot
+
+    return result
+
+
+def construct_edge_list_multivar(data_filter, node_name, edge_name_list, return_df=False):
+    if return_df:
+        edge_lists = []
+    else:
+        edge_comb = np.zeros((1, 2))
+    for i in range(len(edge_name_list)):
+        edge_list = construct_edge_list(data_filter, node_name, edge_name_list[i], return_df=return_df)
+        if return_df:
+            edge_lists.append(edge_list)
+        else:
+            edge_comb = np.vstack((edge_comb, edge_list))
+    if return_df:
+        edge_comb = pd.concat(edge_lists)
+    else:
+        edge_comb = np.delete(edge_comb, 0, 0)
+
+    return edge_comb
