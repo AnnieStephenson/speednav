@@ -484,7 +484,7 @@ def construct_edge_list(data_filter, node_name, edge_name, return_df=False):
     else:
         edges = data_filter[edge_name]
     node_edge_data = np.vstack((nodes, edges))
-    sorted_edge_data = np.sort(node_edge_data.astype(str), axis=1)
+    sorted_edge_data = np.sort(node_edge_data.astype(str), axis=1) # ALERT: this line result in mistakes.
 
     # if two nodes have the same edge variable, then they share an edge
     # sort the dataframe based on the edge variable
